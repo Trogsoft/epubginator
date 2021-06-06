@@ -105,9 +105,15 @@ namespace epubginator
             if (File.Exists(nf))
                 File.Delete(nf);
 
-            File.Copy(filename, nf);
-
-            Console.WriteLine("Backing up source file: " + nf);
+            if (commit)
+            {
+                File.Copy(filename, nf);
+                Console.WriteLine("Working file: " + nf);
+            }
+            else
+            {
+                nf = filename;
+            }
 
             fs = new FileStream(nf, FileMode.Open, FileAccess.ReadWrite);
             epub = new ZipArchive(fs, ZipArchiveMode.Update);
@@ -230,170 +236,175 @@ namespace epubginator
 
             }
 
-            // ncx
-            var ncx = epub.Entries.SingleOrDefault(x => x.FullName.EndsWith(".ncx", StringComparison.CurrentCultureIgnoreCase));
-            if (ncx != null)
+            if (commit)
             {
 
-                var ncxFilename = ncx.Name;
-                MemoryStream ms = new MemoryStream();
-                using (var str = ncx.Open())
+                // ncx
+                var ncx = epub.Entries.SingleOrDefault(x => x.FullName.EndsWith(".ncx", StringComparison.CurrentCultureIgnoreCase));
+                if (ncx != null)
                 {
-                    str.CopyTo(ms);
-                }
-                var ncxmlString = Encoding.UTF8.GetString(ms.GetBuffer());
 
-                XmlDocument ncxml = new XmlDocument();
-                XmlNamespaceManager nsm = new XmlNamespaceManager(ncxml.NameTable);
-                nsm.AddNamespace("ncx", "http://www.daisy.org/z3986/2005/ncx/");
-                ncxml.LoadXml(ncxmlString.Trim('\0'));
-
-                var head = ncxml.SelectSingleNode("//ncx:head", nsm);
-
-                var foundMaxPage = false;
-                var foundTotalPage = false;
-                foreach (XmlNode meta in head.SelectNodes("ncx:meta", nsm))
-                {
-                    if (meta.Attributes["name"].Value == "dtb:totalPageCount")
+                    var ncxFilename = ncx.Name;
+                    MemoryStream ms = new MemoryStream();
+                    using (var str = ncx.Open())
                     {
-                        foundTotalPage = true;
-                        meta.Attributes["content"].Value = (page - 1).ToString();
+                        str.CopyTo(ms);
                     }
-                    if (meta.Attributes["name"].Value == "dtb:maxPageNumber")
+                    var ncxmlString = Encoding.UTF8.GetString(ms.GetBuffer());
+
+                    XmlDocument ncxml = new XmlDocument();
+                    XmlNamespaceManager nsm = new XmlNamespaceManager(ncxml.NameTable);
+                    nsm.AddNamespace("ncx", "http://www.daisy.org/z3986/2005/ncx/");
+                    ncxml.LoadXml(ncxmlString.Trim('\0'));
+
+                    var head = ncxml.SelectSingleNode("//ncx:head", nsm);
+
+                    var foundMaxPage = false;
+                    var foundTotalPage = false;
+                    foreach (XmlNode meta in head.SelectNodes("ncx:meta", nsm))
                     {
-                        foundMaxPage = true;
-                        meta.Attributes["content"].Value = (page - 1).ToString();
+                        if (meta.Attributes["name"].Value == "dtb:totalPageCount")
+                        {
+                            foundTotalPage = true;
+                            meta.Attributes["content"].Value = (page - 1).ToString();
+                        }
+                        if (meta.Attributes["name"].Value == "dtb:maxPageNumber")
+                        {
+                            foundMaxPage = true;
+                            meta.Attributes["content"].Value = (page - 1).ToString();
+                        }
                     }
-                }
 
-                if (!foundTotalPage)
-                {
-                    var newMeta = ncxml.CreateElement("meta", "http://www.daisy.org/z3986/2005/ncx/");
-                    newMeta.SetAttribute("name", "dtb:totalPageCount");
-                    newMeta.SetAttribute("content", (page - 1).ToString());
-                    head.AppendChild(newMeta);
-                }
-
-                if (!foundMaxPage)
-                {
-                    var newMeta = ncxml.CreateElement("meta", "http://www.daisy.org/z3986/2005/ncx/");
-                    newMeta.SetAttribute("name", "dtb:maxPageNumber");
-                    newMeta.SetAttribute("content", (page - 1).ToString());
-                    head.AppendChild(newMeta);
-                }
-
-                var pageList = ncxml.SelectSingleNode("//ncx:pageList", nsm);
-                if (pageList != null)
-                {
-                    pageList.RemoveAll();
-                }
-                else
-                {
-                    pageList = ncxml.CreateElement("pageList");
-                }
-
-                var navLabel = ncxml.CreateElement("navLabel");
-                var navLabelText = ncxml.CreateElement("text");
-                navLabelText.InnerText = "Pages";
-                navLabel.AppendChild(navLabelText);
-                pageList.AppendChild(navLabel);
-
-                for (var p = 1; p < page; p++)
-                {
-
-                    var pageX = ncxml.CreateElement("pageTarget");
-                    pageX.SetAttribute("type", "normal");
-                    pageX.SetAttribute("id", "pg" + p);
-                    pageX.SetAttribute("value", p.ToString());
-                    pageX.SetAttribute("playOrder", p.ToString());
-
-                    var pnl = ncxml.CreateElement("navLabel");
-                    var pnlt = ncxml.CreateElement("text");
-                    pnlt.InnerText = p.ToString();
-                    pnl.AppendChild(pnlt);
-                    pageX.AppendChild(pnl);
-
-                    var entity = manifest.SingleOrDefault(x => x.Pages.Contains(p));
-
-                    var c = ncxml.CreateElement("content");
-                    c.SetAttribute("src", entity.Href + "#pg" + p);
-
-                    pageX.AppendChild(c);
-                    pageList.AppendChild(pageX);
-
-                }
-
-                var root = ncxml.SelectSingleNode("//ncx:ncx", nsm);
-                root.AppendChild(pageList);
-
-                ncx.Delete();
-                var newncx = epub.CreateEntry(ncxFilename);
-                using (var sw = new StreamWriter(newncx.Open()))
-                {
-                    sw.WriteLine(ncxml.DocumentElement.OuterXml);
-                }
-
-            }
-
-            // nav.xhtml 
-            // todo: probably need to consult the spine to find this
-
-            var nav = epub.Entries.SingleOrDefault(x => x.FullName.Equals("nav.xhtml", StringComparison.CurrentCultureIgnoreCase));
-            if (nav != null)
-            {
-                var navFilename = nav.Name;
-                MemoryStream ms = new MemoryStream();
-                using (var str = nav.Open())
-                {
-                    str.CopyTo(ms);
-                }
-                var navString = Encoding.UTF8.GetString(ms.GetBuffer());
-                HtmlDocument hd = new HtmlDocument();
-                
-                hd.OptionWriteEmptyNodes = true;
-                hd.LoadHtml(navString);
-
-                var body = hd.DocumentNode.SelectSingleNode("//body");
-                HtmlNode pln = null;
-                foreach (HtmlNode node in body.SelectNodes("//nav"))
-                {
-                    if ((node.Attributes["epub:type"]?.Value ?? "") == "page-list")
+                    if (!foundTotalPage)
                     {
-                        pln = node;
-                        break;
+                        var newMeta = ncxml.CreateElement("meta", "http://www.daisy.org/z3986/2005/ncx/");
+                        newMeta.SetAttribute("name", "dtb:totalPageCount");
+                        newMeta.SetAttribute("content", (page - 1).ToString());
+                        head.AppendChild(newMeta);
                     }
+
+                    if (!foundMaxPage)
+                    {
+                        var newMeta = ncxml.CreateElement("meta", "http://www.daisy.org/z3986/2005/ncx/");
+                        newMeta.SetAttribute("name", "dtb:maxPageNumber");
+                        newMeta.SetAttribute("content", (page - 1).ToString());
+                        head.AppendChild(newMeta);
+                    }
+
+                    var pageList = ncxml.SelectSingleNode("//ncx:pageList", nsm);
+                    if (pageList != null)
+                    {
+                        pageList.RemoveAll();
+                    }
+                    else
+                    {
+                        pageList = ncxml.CreateElement("pageList");
+                    }
+
+                    var navLabel = ncxml.CreateElement("navLabel");
+                    var navLabelText = ncxml.CreateElement("text");
+                    navLabelText.InnerText = "Pages";
+                    navLabel.AppendChild(navLabelText);
+                    pageList.AppendChild(navLabel);
+
+                    for (var p = 1; p < page; p++)
+                    {
+
+                        var pageX = ncxml.CreateElement("pageTarget");
+                        pageX.SetAttribute("type", "normal");
+                        pageX.SetAttribute("id", "pg" + p);
+                        pageX.SetAttribute("value", p.ToString());
+                        pageX.SetAttribute("playOrder", p.ToString());
+
+                        var pnl = ncxml.CreateElement("navLabel");
+                        var pnlt = ncxml.CreateElement("text");
+                        pnlt.InnerText = p.ToString();
+                        pnl.AppendChild(pnlt);
+                        pageX.AppendChild(pnl);
+
+                        var entity = manifest.SingleOrDefault(x => x.Pages.Contains(p));
+
+                        var c = ncxml.CreateElement("content");
+                        c.SetAttribute("src", entity.Href + "#pg" + p);
+
+                        pageX.AppendChild(c);
+                        pageList.AppendChild(pageX);
+
+                    }
+
+                    var root = ncxml.SelectSingleNode("//ncx:ncx", nsm);
+                    root.AppendChild(pageList);
+
+                    ncx.Delete();
+                    var newncx = epub.CreateEntry(ncxFilename);
+                    using (var sw = new StreamWriter(newncx.Open()))
+                    {
+                        sw.WriteLine(ncxml.DocumentElement.OuterXml);
+                    }
+
                 }
 
-                if (pln != null)
-                    pln.Remove();
+                // nav.xhtml 
+                // todo: probably need to consult the spine to find this
 
-                pln = hd.CreateElement("nav");
-                pln.Attributes.Add("epub:type", "page-list");
-                pln.Attributes.Add("hidden", "hidden");
-
-                body.AppendChild(pln);
-
-                var ol = hd.CreateElement("ol");
-
-                for (var p = 1; p < page; p++)
+                var nav = epub.Entries.SingleOrDefault(x => x.FullName.Equals("nav.xhtml", StringComparison.CurrentCultureIgnoreCase));
+                if (nav != null)
                 {
-                    var entity = manifest.SingleOrDefault(x => x.Pages.Contains(p));
-                    var li = hd.CreateElement("li");
-                    var a = hd.CreateElement("a");
-                    a.Attributes.Add("href", entity.Href + "#pg" + p);
-                    var t = hd.CreateTextNode(p.ToString());
-                    a.AppendChild(t);
-                    li.AppendChild(a);
-                    ol.AppendChild(li);
-                }
+                    var navFilename = nav.Name;
+                    MemoryStream ms = new MemoryStream();
+                    using (var str = nav.Open())
+                    {
+                        str.CopyTo(ms);
+                    }
+                    var navString = Encoding.UTF8.GetString(ms.GetBuffer());
+                    HtmlDocument hd = new HtmlDocument();
 
-                pln.AppendChild(ol);
+                    hd.OptionWriteEmptyNodes = true;
+                    hd.LoadHtml(navString);
 
-                nav.Delete();
-                var newnav = epub.CreateEntry(navFilename);
-                using (var sw = new StreamWriter(newnav.Open()))
-                {
-                    sw.WriteLine(hd.DocumentNode.OuterHtml);
+                    var body = hd.DocumentNode.SelectSingleNode("//body");
+                    HtmlNode pln = null;
+                    foreach (HtmlNode node in body.SelectNodes("//nav"))
+                    {
+                        if ((node.Attributes["epub:type"]?.Value ?? "") == "page-list")
+                        {
+                            pln = node;
+                            break;
+                        }
+                    }
+
+                    if (pln != null)
+                        pln.Remove();
+
+                    pln = hd.CreateElement("nav");
+                    pln.Attributes.Add("epub:type", "page-list");
+                    pln.Attributes.Add("hidden", "hidden");
+
+                    body.AppendChild(pln);
+
+                    var ol = hd.CreateElement("ol");
+
+                    for (var p = 1; p < page; p++)
+                    {
+                        var entity = manifest.SingleOrDefault(x => x.Pages.Contains(p));
+                        var li = hd.CreateElement("li");
+                        var a = hd.CreateElement("a");
+                        a.Attributes.Add("href", entity.Href + "#pg" + p);
+                        var t = hd.CreateTextNode(p.ToString());
+                        a.AppendChild(t);
+                        li.AppendChild(a);
+                        ol.AppendChild(li);
+                    }
+
+                    pln.AppendChild(ol);
+
+                    nav.Delete();
+                    var newnav = epub.CreateEntry(navFilename);
+                    using (var sw = new StreamWriter(newnav.Open()))
+                    {
+                        sw.WriteLine(hd.DocumentNode.OuterHtml);
+                    }
+
                 }
 
             }
