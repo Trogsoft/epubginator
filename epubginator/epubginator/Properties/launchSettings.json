@@ -1,0 +1,9 @@
+{
+  "profiles": {
+    "epubginator": {
+      "commandName": "Project",
+      "commandLineArgs": "paginate -f \"D:\\OneDrive\\Fiction\\@Compiled\\Despair Train\\Off Track - Final.epub\" --commit -w 236",
+      "sqlDebugging": false
+    }
+  }
+}
